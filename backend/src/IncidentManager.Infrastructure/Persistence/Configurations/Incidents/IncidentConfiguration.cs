@@ -28,13 +28,17 @@ internal sealed class IncidentConfiguration : IEntityTypeConfiguration<Incident>
             .HasColumnType("text[]");
 
         b.Property(x => x.SourceMetadata)
-            .HasColumnName("source_metadata")   // ← esto resuelve el error
+            .HasColumnName("source_metadata")
             .HasColumnType("jsonb")
             .HasConversion(
                 v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
                 v => JsonSerializer.Deserialize<Dictionary<string, object>>(
                          v, (JsonSerializerOptions?)null)
-                     ?? new Dictionary<string, object>());
+                     ?? new Dictionary<string, object>())
+            .Metadata.SetValueComparer(new Microsoft.EntityFrameworkCore.ChangeTracking.ValueComparer<Dictionary<string, object>>(
+                (c1, c2) => c1!.SequenceEqual(c2!),
+                c => c.Aggregate(0, (a, v) => HashCode.Combine(a, v.GetHashCode())),
+                c => c.ToDictionary(entry => entry.Key, entry => entry.Value)));
 
         b.HasIndex(x => new { x.TeamId, x.Status });
         b.HasIndex(x => x.CreatedAt);

@@ -1,0 +1,109 @@
+name: CI/CD Incident Manager
+run-name: ${{ gitea.actor }} - Desplegando Incident Manager
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  REGISTRY: ${{ secrets.REGISTRY_URL }}
+  IMAGE_NAME: ${{ secrets.IMAGE_NAME }}
+  DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 
+
+      - name: Login al Registry
+        run: |
+          echo "${{ secrets.DEPLOY_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ secrets.REGISTRY_USER }} --password-stdin
+
+      - name: Build y Push imagen
+        run: |
+          OWNER_LC=$(echo ${{ gitea.repository_owner }} | tr '[:upper:]' '[:lower:]')
+          REPO_FULL_PATH="${{ env.REGISTRY }}/$OWNER_LC/${{ env.IMAGE_NAME }}"
+          docker build -t $REPO_FULL_PATH:latest -t $REPO_FULL_PATH:${{ gitea.sha }} ./backend
+          docker push $REPO_FULL_PATH --all-tags
+
+      - name: Generar docker-compose y desplegar en VPS
+        run: |
+          sudo mkdir -p ${{ env.DEPLOY_PATH }}
+          sudo chmod 777 ${{ env.DEPLOY_PATH }}
+          OWNER_LC=$(echo ${{ gitea.repository_owner }} | tr '[:upper:]' '[:lower:]')
+          
+          sudo tee ${{ env.DEPLOY_PATH }}/docker-compose.yml > /dev/null <<EOF
+          services:
+            ${{ env.IMAGE_NAME }}:
+              image: ${{ env.REGISTRY }}/$OWNER_LC/${{ env.IMAGE_NAME }}:latest
+              container_name: ${{ env.IMAGE_NAME }}
+              restart: always
+              networks:
+                - web
+                - internal
+              environment:
+                - ASPNETCORE_ENVIRONMENT=Production
+                - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=${{ secrets.DB_NAME }};Username=${{ secrets.DB_USER }};Password=${{ secrets.DB_PASSWORD }}
+                - ConnectionStrings__Redis=${{ secrets.REDIS_HOST }}:6379,password=${{ secrets.REDIS_PASSWORD }}
+                - Jwt__SecretKey=${{ secrets.JWT_SECRET_KEY }}
+                - Webhooks__PrometheusSecret=${{ secrets.PROMETHEUS_SECRET }}
+                - Webhooks__GiteaSecret=${{ secrets.GIT_EA_SECRET }}
+              labels:
+                - "traefik.enable=true"
+                - "traefik.http.routers.${{ env.IMAGE_NAME }}.rule=Host(\`${{ secrets.DOMAIN_URL }}\`)"
+                - "traefik.http.routers.${{ env.IMAGE_NAME }}.entrypoints=websecure"
+                - "traefik.http.routers.${{ env.IMAGE_NAME }}.tls.certresolver=letsencrypt"
+                - "traefik.http.services.${{ env.IMAGE_NAME }}.loadbalancer.server.port=8080"
+                - "traefik.docker.network=web"
+          networks:
+            web:
+              external: true
+            internal:
+              external: true
+          EOF
+
+          cd ${{ env.DEPLOY_PATH }}
+          sudo docker compose pull
+          sudo docker compose up -d --remove-orphans
+          sudo docker image prune -f
+
+      - name: Sync Mirror a GitHub
+        if: success()
+        run: |
+          REMOTE_URL="https://${{ secrets.GIT_HUB_USER }}:${{ secrets.GIT_HUB_SYNC_TOKEN }}@github.com/${{ secrets.GIT_HUB_USER }}/${{ secrets.GIT_HUB_REPO_NAME }}.git"
+          git push --force "$REMOTE_URL" main:main
+
+      - name: Notificar a Telegram
+        if: always()
+        run: |
+          MSG=$(git log -1 --pretty=format:"%s")
+          STATUS="${{ job.status }}"
+          ICON=$([[ "$STATUS" == "success" ]] && echo "✅" || echo "❌")
+          
+          TEXT="${ICON} *INCIDENT MANAGER: ${STATUS^^}*%0A%0A"
+          TEXT+="📝 *Commit:* ${MSG}%0A"
+          TEXT+="🌐 [API/Swagger](https://${{ secrets.DOMAIN_URL }}/swagger)"
+
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d parse_mode="Markdown" \
+            -d text="$TEXT"
+
+## Secretos a configurar en Gitea para este repo
+# # REGISTRY_URL      → URL de tu registry Gitea
+# # REGISTRY_USER     → tu usuario Gitea
+# # DEPLOY_TOKEN      → token con permisos packages:write
+# # IMAGE_NAME        → incident-manager-api
+# # DEPLOY_PATH       → /opt/vps-infrastructure/apps/incident-manager
+# # DB_NAME           → incident_manager
+# # DB_USER           → usuario del Postgres existente en el VPS
+# # DB_PASSWORD       → contraseña del Postgres existente
+# # REDIS_HOST        → nombre del contenedor Redis (confirmarlo con docker ps)
+# # JWT_SECRET_KEY    → secreto JWT mínimo 64 chars
+# # PROMETHEUS_SECRET → secret HMAC webhooks Prometheus
+# # GITEA_SECRET      → secret HMAC webhooks Gitea
+# # DOMAIN_URL        → api.tudominio.com

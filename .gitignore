@@ -1,0 +1,20 @@
+# .NET Core
+**/bin/
+**/obj/
+*.user
+.vs/
+_ReSharper*/
+
+# Configuración y Secretos
+.env                # MUY IMPORTANTE: Ignorar siempre
+.env.local
+appsettings.Production.json
+appsettings.*.local.json
+
+# Docker
+docker-compose.override.yml   # Ignorar porque tiene tus puertos locales (5433, 6380)
+
+# IDEs
+.idea/
+.vscode/
+.DS_Store

@@ -1,0 +1,40 @@
+# =============================================================================
+# docker-compose.override.yml — LOCAL (sin Traefik, puertos expuestos)
+# Se aplica automáticamente sobre docker-compose.yml
+# =============================================================================
+networks:
+  traefik_proxy:
+    driver: bridge
+    name: traefik_proxy_local
+
+services:
+
+  api:
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-incident_manager};Username=${POSTGRES_USER:-im_user};Password=${POSTGRES_PASSWORD:-changeme_dev}"
+      ConnectionStrings__Redis: "redis:6379"
+    ports:
+      - "${API_PORT:-8080}:8080"
+    labels:
+      - "traefik.enable=false"
+
+  postgres:
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - ./scripts/db/05_seed.sql:/docker-entrypoint-initdb.d/05_seed.sql
+
+  redis:
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+
+  adminer:
+    image: adminer:latest
+    restart: unless-stopped
+    ports:
+      - "9091:8080"
+    networks: [internal]
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DESIGN: dracula

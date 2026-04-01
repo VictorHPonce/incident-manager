@@ -45,7 +45,24 @@ try
             new System.Text.Json.Serialization.JsonStringEnumConverter());
     });
 
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy("DefaultPolicy", policy =>
+        {
+            policy.WithOrigins(
+                    "http://localhost:4200",
+                    "https://devexup.net"
+                  )
+                  .AllowAnyMethod()
+                  .AllowAnyHeader()
+                  .AllowCredentials() // Necesario si usas Cookies para el Refresh Token
+                  .SetIsOriginAllowedToAllowWildcardSubdomains();
+        });
+    });
+
     var app = builder.Build();
+
+    app.UseCors("DefaultPolicy");
 
     // ── Pipeline de middleware — el orden importa ──────────────────────────
     // 1. Captura excepciones (debe ser el primero)

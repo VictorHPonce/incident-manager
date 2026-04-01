@@ -41,8 +41,8 @@ public static class IncidentEndpoints
         .Produces<PagedResult<IncidentListItem>>();
 
         // POST /api/incidents
-        g.MapPost("/", async (
-            CreateIncidentCommand cmd, IMediator m, CancellationToken ct) =>
+        g.MapPost("/", async(
+            [FromBody] CreateIncidentCommand cmd, IMediator m, CancellationToken ct) =>
         {
             var result = await m.Send(cmd, ct);
             return result.IsSuccess
